@@ -75,18 +75,27 @@ export class AiClientService {
     return '未知错误';
   }
 
-  // 兼容标准 OpenAI 与部分中转平台的返回结构
+  // Compatible with standard OpenAI and some relay-platform response payloads.
+  private isTextPart(item: unknown): item is { text: string } {
+    return typeof item === 'object' && item !== null && typeof (item as { text?: unknown }).text === 'string';
+  }
+
   private extractChatContent(response: unknown): string {
     const payload = response as {
       choices?: Array<{ message?: { content?: unknown } }>;
       data?: { choices?: Array<{ message?: { content?: unknown } }> };
     };
 
-    const choices = Array.isArray(payload?.choices)
-      ? payload.choices
-      : (Array.isArray(payload?.data?.choices) ? payload.data.choices : []);
+    let choices: Array<{ message?: { content?: unknown } }>;
+    if (Array.isArray(payload?.choices)) {
+      choices = payload.choices;
+    } else if (Array.isArray(payload?.data?.choices)) {
+      choices = payload.data.choices;
+    } else {
+      choices = [];
+    }
 
-    const content = choices?.[0]?.message?.content;
+    const content = choices[0]?.message?.content;
     if (typeof content === 'string') {
       return content;
     }
@@ -95,8 +104,8 @@ export class AiClientService {
       return content
         .map((item) => {
           if (typeof item === 'string') return item;
-          if (typeof item === 'object' && item !== null && typeof (item as { text?: unknown }).text === 'string') {
-            return (item as { text: string }).text;
+          if (this.isTextPart(item)) {
+            return item.text;
           }
           return '';
         })
@@ -164,8 +173,8 @@ export class AiClientService {
         yield content;
       } else if (Array.isArray(content)) {
         for (const part of content) {
-          if (typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string') {
-            yield (part as { text: string }).text;
+          if (this.isTextPart(part)) {
+            yield part.text;
           }
         }
       }
