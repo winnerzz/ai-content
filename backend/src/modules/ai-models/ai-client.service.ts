@@ -75,6 +75,46 @@ export class AiClientService {
     return '未知错误';
   }
 
+  // Compatible with standard OpenAI and some relay-platform response payloads.
+  private isTextPart(item: unknown): item is { text: string } {
+    return typeof item === 'object' && item !== null && typeof (item as { text?: unknown }).text === 'string';
+  }
+
+  private extractChatContent(response: unknown): string {
+    const payload = response as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+      data?: { choices?: Array<{ message?: { content?: unknown } }> };
+    };
+
+    let choices: Array<{ message?: { content?: unknown } }>;
+    if (Array.isArray(payload?.choices)) {
+      choices = payload.choices;
+    } else if (Array.isArray(payload?.data?.choices)) {
+      choices = payload.data.choices;
+    } else {
+      choices = [];
+    }
+
+    const content = choices[0]?.message?.content;
+    if (typeof content === 'string') {
+      return content;
+    }
+
+    if (Array.isArray(content)) {
+      return content
+        .map((item) => {
+          if (typeof item === 'string') return item;
+          if (this.isTextPart(item)) {
+            return item.text;
+          }
+          return '';
+        })
+        .join('');
+    }
+
+    return '';
+  }
+
   // 非流式生成（用于评分、摘要等）
   async generate(
     modelId: string,
@@ -99,7 +139,7 @@ export class AiClientService {
       max_tokens: options?.maxTokens ?? 4000,
     });
 
-    return response.choices[0]?.message?.content || '';
+    return this.extractChatContent(response);
   }
 
   // 流式生成（用于文章创作）
@@ -128,9 +168,15 @@ export class AiClientService {
     });
 
     for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
+      const content = chunk.choices?.[0]?.delta?.content;
+      if (typeof content === 'string' && content) {
         yield content;
+      } else if (Array.isArray(content)) {
+        for (const part of content) {
+          if (this.isTextPart(part)) {
+            yield part.text;
+          }
+        }
       }
     }
   }
