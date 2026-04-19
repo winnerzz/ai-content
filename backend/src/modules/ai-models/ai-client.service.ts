@@ -75,6 +75,37 @@ export class AiClientService {
     return '未知错误';
   }
 
+  // 兼容标准 OpenAI 与部分中转平台的返回结构
+  private extractChatContent(response: unknown): string {
+    const payload = response as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+      data?: { choices?: Array<{ message?: { content?: unknown } }> };
+    };
+
+    const choices = Array.isArray(payload?.choices)
+      ? payload.choices
+      : (Array.isArray(payload?.data?.choices) ? payload.data.choices : []);
+
+    const content = choices?.[0]?.message?.content;
+    if (typeof content === 'string') {
+      return content;
+    }
+
+    if (Array.isArray(content)) {
+      return content
+        .map((item) => {
+          if (typeof item === 'string') return item;
+          if (typeof item === 'object' && item !== null && typeof (item as { text?: unknown }).text === 'string') {
+            return (item as { text: string }).text;
+          }
+          return '';
+        })
+        .join('');
+    }
+
+    return '';
+  }
+
   // 非流式生成（用于评分、摘要等）
   async generate(
     modelId: string,
@@ -99,7 +130,7 @@ export class AiClientService {
       max_tokens: options?.maxTokens ?? 4000,
     });
 
-    return response.choices[0]?.message?.content || '';
+    return this.extractChatContent(response);
   }
 
   // 流式生成（用于文章创作）
@@ -128,9 +159,15 @@ export class AiClientService {
     });
 
     for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
+      const content = chunk.choices?.[0]?.delta?.content;
+      if (typeof content === 'string' && content) {
         yield content;
+      } else if (Array.isArray(content)) {
+        for (const part of content) {
+          if (typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string') {
+            yield (part as { text: string }).text;
+          }
+        }
       }
     }
   }
